@@ -1,11 +1,15 @@
 import os
 import re
 import shutil
+import ipaddress
+import socket
 import subprocess
 import tempfile
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -57,16 +61,14 @@ def save_upload(upload: UploadFile, target: Path) -> None:
             output.write(chunk)
 
 
-def slice_model(upload: UploadFile, workdir: Path) -> Path:
-    suffix = Path(upload.filename or "model.stl").suffix.lower()
+def slice_path(source: Path, workdir: Path) -> Path:
+    suffix = source.suffix.lower()
     if suffix not in {".stl", ".obj", ".3mf", ".amf"}:
         raise HTTPException(status_code=400, detail="Desteklenen biçimler: STL, OBJ, 3MF, AMF")
     command = slicer_command()
     if command is None:
         raise HTTPException(status_code=503, detail="PrusaSlicer CLI bu imajda kurulamadı; README'deki açıklamaya bakın")
-    source = workdir / f"model{suffix}"
     output = workdir / "output.gcode"
-    save_upload(upload, source)
     args = command + ["--load", str(PROFILE), "--export-gcode", "--output", str(output), str(source)]
     try:
         completed = subprocess.run(args, capture_output=True, text=True, timeout=SLICER_TIMEOUT)
@@ -76,6 +78,43 @@ def slice_model(upload: UploadFile, workdir: Path) -> Path:
         message = (completed.stderr or completed.stdout or "Bilinmeyen PrusaSlicer hatası")[-1500:]
         raise HTTPException(status_code=422, detail=f"Dilimleme başarısız: {message}")
     return output
+
+
+def slice_model(upload: UploadFile, workdir: Path) -> Path:
+    suffix = Path(upload.filename or "model.stl").suffix.lower()
+    source = workdir / f"model{suffix}"
+    save_upload(upload, source)
+    return slice_path(source, workdir)
+
+
+def download_model(url: str, filename: str, workdir: Path) -> Path:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise HTTPException(status_code=400, detail="Geçersiz file_url")
+    try:
+        addresses = socket.getaddrinfo(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80))
+        if any(ipaddress.ip_address(item[4][0]).is_private or ipaddress.ip_address(item[4][0]).is_loopback for item in addresses):
+            raise HTTPException(status_code=400, detail="Özel ağ adreslerinden dosya indirilemez")
+    except socket.gaierror as exc:
+        raise HTTPException(status_code=400, detail="Dosya sunucusu çözümlenemedi") from exc
+    suffix = Path(filename or parsed.path).suffix.lower()
+    if suffix not in {".stl", ".obj", ".3mf", ".amf"}:
+        raise HTTPException(status_code=400, detail="Desteklenen biçimler: STL, OBJ, 3MF, AMF")
+    target = workdir / f"model{suffix}"
+    request = urllib.request.Request(url, headers={"User-Agent": "3d-slicer-server/1.1"})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response, target.open("wb") as output:
+            total = 0
+            while chunk := response.read(1024 * 1024):
+                total += len(chunk)
+                if total > MAX_UPLOAD_MB * 1024 * 1024:
+                    raise HTTPException(status_code=413, detail=f"Dosya {MAX_UPLOAD_MB} MB sınırını aşıyor")
+                output.write(chunk)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Model dosyası indirilemedi: {exc}") from exc
+    return target
 
 
 def metadata(gcode: Path) -> dict:
@@ -95,11 +134,49 @@ def metadata(gcode: Path) -> dict:
     return result
 
 
+def duration_hours(value: str) -> float:
+    hours = float(re.search(r"(\d+)h", value).group(1)) if re.search(r"(\d+)h", value) else 0
+    minutes = float(re.search(r"(\d+)m", value).group(1)) if re.search(r"(\d+)m", value) else 0
+    seconds = float(re.search(r"(\d+)s", value).group(1)) if re.search(r"(\d+)s", value) else 0
+    return hours + minutes / 60 + seconds / 3600
+
+
+def priced_result(result: dict, payload: dict) -> dict:
+    grams = float(result.get("filament_used_g", 0))
+    hours = duration_hours(str(result.get("estimated_print_time", "")))
+    quantity = max(1, int(payload.get("quantity", 1)))
+    material = grams / 1000 * float(payload.get("material_price_per_kg", 0))
+    material *= 1 + float(payload.get("waste_percent", 0)) / 100
+    machine = hours * float(payload.get("printer_hourly_cost", 0))
+    labor = hours * float(payload.get("labor_hour", 0))
+    subtotal = (material + machine + labor) * quantity
+    selling = subtotal * (1 + float(payload.get("profit_percent", 0)) / 100)
+    selling = max(selling, float(payload.get("minimum_order", 0)))
+    return {
+        **result,
+        "filament_grams": grams * quantity,
+        "print_time_text": result.get("estimated_print_time", "-"),
+        "selling_price": round(selling, 2),
+        "quantity": quantity,
+    }
+
+
 @app.post("/quote", dependencies=[Depends(require_api_key)])
-def quote(file: UploadFile = File(...)) -> dict:
+async def quote(request: Request, file: UploadFile | None = File(default=None)) -> dict:
     with tempfile.TemporaryDirectory() as directory:
-        gcode = slice_model(file, Path(directory))
-        return {"mode": "real", "currency": "profile-defined", **metadata(gcode)}
+        workdir = Path(directory)
+        payload: dict = {}
+        if file is not None:
+            gcode = slice_model(file, workdir)
+        else:
+            try:
+                payload = await request.json()
+            except Exception as exc:
+                raise HTTPException(status_code=422, detail="file veya JSON file_url gerekli") from exc
+            source = download_model(str(payload.get("file_url", "")), str(payload.get("filename", "")), workdir)
+            gcode = slice_path(source, workdir)
+        result = {"mode": "real", "currency": "TRY", **metadata(gcode)}
+        return priced_result(result, payload) if payload else result
 
 
 @app.post("/slice", dependencies=[Depends(require_api_key)])
