@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: 3d-slicer-server
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: API_KEY
+        generateValue: true
+      - key: MAX_UPLOAD_MB
+        value: "50"
+      - key: SLICER_TIMEOUT
+        value: "240"
