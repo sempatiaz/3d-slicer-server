@@ -5,7 +5,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 # Debian deposundaki PrusaSlicer gerçek CLI entegrasyonudur. Paket mimaride
 # bulunamazsa build bilinçli olarak başarısız olur; sessiz placeholder üretmez.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends prusa-slicer xvfb ca-certificates \
+    && apt-get install -y --no-install-recommends prusa-slicer xvfb xauth ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
