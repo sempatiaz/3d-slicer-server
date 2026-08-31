@@ -1,6 +1,8 @@
 # Render için 3D Slicer Sunucusu
 
-FastAPI ve Docker tabanlı küçük bir PrusaSlicer API'sidir. `/quote` modeli gerçekten dilimler ve G-code yorumlarından süre/filament tahmini çıkarır; `/slice` üretilen G-code'u indirir. `/health` kimlik doğrulama istemez.
+**Sürüm: v1.1**
+
+FastAPI ve Docker tabanlı küçük bir PrusaSlicer API'sidir. `/quote` modeli gerçekten dilimler ve G-code yorumlarından süre/filament tahmini çıkarır; `/slice` üretilen G-code'u indirir. `/health` kimlik doğrulama istemez. `/quote`, doğrudan multipart dosya yüklemenin yanında WordPress eklentisinin gönderdiği JSON `file_url` biçimini de destekler.
 
 ## Gerçek entegrasyon ve sınırlar
 
@@ -67,5 +69,28 @@ Ardından `http://localhost:10000/docs` adresini açın.
 - `GET /health`: Servis ve PrusaSlicer bulunabilirlik durumu.
 - `POST /quote`: STL/OBJ/3MF/AMF yükler, gerçek dilimleme sonrası süre ve filament metadatası döndürür.
 - `POST /slice`: Aynı modeli dilimler ve G-code dosyası döndürür.
+
+## v1.1 hata yanıtları
+
+`/quote` artık 4xx/5xx durumlarında WordPress'in doğrudan gösterebileceği tutarlı JSON döndürür:
+
+```json
+{
+  "message": "PrusaSlicer modeli dilimleyemedi",
+  "detail": "PrusaSlicer başarısız çıkış kodu döndürdü: 1",
+  "error_type": "slicer_exit_error",
+  "exit_code": 1,
+  "prusa_stdout": "...",
+  "prusa_stderr": "..."
+}
+```
+
+Ayırt edilen hata türleri: `file_download_error`, `unsupported_file_type`, `file_too_large`, `model_outside_print_area`, `slicer_exit_error`, `slicer_timeout`, `slicer_unavailable`, `request_validation_error`, `authentication_error`, `http_error` ve `unexpected_error`. Doğrulama ayrıntıları varsa `validation_reason`, PrusaSlicer çıktıları varsa `prusa_stdout` ve `prusa_stderr` alanları eklenir. Çıktılar yanıtın aşırı büyümemesi için son 12.000 karakterle sınırlandırılır. `/health` yanıtı v1.0 ile aynıdır.
+
+Testleri çalıştırmak için `pip install -r requirements-dev.txt` ardından `pytest -q` kullanabilirsiniz.
+
+## Kısa güncelleme notu
+
+v1.1 ile `/quote` hata teşhisi geliştirildi. Dosya indirme, desteklenmeyen biçim, baskı alanına sığmama, PrusaSlicer çıkış kodu, zaman aşımı ve beklenmeyen hata durumları ayrı JSON hata türleri olarak döndürülüyor. WordPress uyumluluğu için `message`, `detail` ve `error_type` alanları eklendi; `/health` ve Render çalışma şekli değiştirilmedi.
 
 Güvenlik notu: Bu servis temel API anahtarı kontrolü sağlar; rate limit, kullanıcı hesabı, virüs taraması ve kalıcı iş kuyruğu içermez.
