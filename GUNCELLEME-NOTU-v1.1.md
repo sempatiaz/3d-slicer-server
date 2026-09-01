@@ -5,3 +5,5 @@
 `/health`, Docker, Render `PORT` kullanımı ve mevcut endpoint adresleri değiştirilmedi.
 
 v1.1.1 düzeltmesiyle PrusaSlicer işlemi ayrı bir iş parçacığında çalıştırılarak dilimleme sürerken `/health` endpointinin yanıt vermeye devam etmesi sağlandı. Böylece Render health check kaynaklı 502 riski azaltıldı.
+
+v1.1.2 ile büyük dosyalar için indirme süresi 30 saniyeden yapılandırılabilir `DOWNLOAD_TIMEOUT` değerine taşındı; Render varsayılanı 180 saniyedir.

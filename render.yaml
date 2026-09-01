@@ -8,6 +8,8 @@ services:
       - key: API_KEY
         generateValue: true
       - key: MAX_UPLOAD_MB
-        value: "50"
+        value: "200"
       - key: SLICER_TIMEOUT
         value: "240"
+      - key: DOWNLOAD_TIMEOUT
+        value: "180"

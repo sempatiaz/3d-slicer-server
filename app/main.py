@@ -19,9 +19,10 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-app = FastAPI(title="3D Slicer Server", version="1.1.1")
-MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "50"))
+app = FastAPI(title="3D Slicer Server", version="1.1.2")
+MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "200"))
 SLICER_TIMEOUT = int(os.getenv("SLICER_TIMEOUT", "240"))
+DOWNLOAD_TIMEOUT = int(os.getenv("DOWNLOAD_TIMEOUT", "180"))
 PROFILE = Path(os.getenv("SLICER_PROFILE", "/app/profiles/default.ini"))
 SUPPORTED_SUFFIXES = {".stl", ".obj", ".3mf", ".amf"}
 LOG_LIMIT = 12000
@@ -204,7 +205,7 @@ def download_model(url: str, filename: str, workdir: Path) -> Path:
     target = workdir / f"model{suffix}"
     request = urllib.request.Request(url, headers={"User-Agent": "3d-slicer-server/1.1"})
     try:
-        with urllib.request.urlopen(request, timeout=30) as response, target.open("wb") as output:
+        with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT) as response, target.open("wb") as output:
             total = 0
             while chunk := response.read(1024 * 1024):
                 total += len(chunk)
@@ -217,6 +218,8 @@ def download_model(url: str, filename: str, workdir: Path) -> Path:
         raise QuoteError(422, "Dosya indirilemiyor", "file_download_error", detail=f"Dosya sunucusu HTTP {exc.code} döndürdü.", validation_reason={"http_status": exc.code, "reason": str(exc.reason)}) from exc
     except urllib.error.URLError as exc:
         raise QuoteError(422, "Dosya indirilemiyor", "file_download_error", detail=f"Dosya sunucusuna bağlanılamadı: {exc.reason}", validation_reason="connection_failed") from exc
+    except TimeoutError as exc:
+        raise QuoteError(504, "Dosya indirme zaman aşımına uğradı", "file_download_timeout", detail=f"Model dosyası {DOWNLOAD_TIMEOUT} saniye içinde indirilemedi.", validation_reason="download_timeout") from exc
     except Exception as exc:
         raise QuoteError(422, "Dosya indirilemiyor", "file_download_error", detail=f"Model dosyası indirilemedi: {exc}", validation_reason=type(exc).__name__) from exc
     return target

@@ -1,6 +1,6 @@
 # Render için 3D Slicer Sunucusu
 
-**Sürüm: v1.1.1**
+**Sürüm: v1.1.2**
 
 FastAPI ve Docker tabanlı küçük bir PrusaSlicer API'sidir. `/quote` modeli gerçekten dilimler ve G-code yorumlarından süre/filament tahmini çıkarır; `/slice` üretilen G-code'u indirir. `/health` kimlik doğrulama istemez. `/quote`, doğrudan multipart dosya yüklemenin yanında WordPress eklentisinin gönderdiği JSON `file_url` biçimini de destekler.
 
@@ -53,7 +53,7 @@ curl -X POST https://SERVISINIZ.onrender.com/slice \
 
 Swagger arayüzü: `https://SERVISINIZ.onrender.com/docs`
 
-`API_KEY` boş bırakılırsa koruma devre dışı kalır; internete açık bir serviste bunu yapmayın. Yükleme sınırı `MAX_UPLOAD_MB`, işlem zaman aşımı `SLICER_TIMEOUT` ile değiştirilebilir.
+`API_KEY` boş bırakılırsa koruma devre dışı kalır; internete açık bir serviste bunu yapmayın. Yükleme sınırı `MAX_UPLOAD_MB`, model indirme zaman aşımı `DOWNLOAD_TIMEOUT`, dilimleme zaman aşımı `SLICER_TIMEOUT` ile değiştirilebilir.
 
 ## Yerelde çalıştırma
 
@@ -94,5 +94,8 @@ Testleri çalıştırmak için `pip install -r requirements-dev.txt` ardından `
 v1.1 ile `/quote` hata teşhisi geliştirildi. Dosya indirme, desteklenmeyen biçim, baskı alanına sığmama, PrusaSlicer çıkış kodu, zaman aşımı ve beklenmeyen hata durumları ayrı JSON hata türleri olarak döndürülüyor. WordPress uyumluluğu için `message`, `detail` ve `error_type` alanları eklendi; `/health` ve Render çalışma şekli değiştirilmedi.
 
 v1.1.1 ile PrusaSlicer işi web sunucusunun ana döngüsünden ayrıldı. Uzun dilimleme sırasında `/health` yanıt vermeye devam eder; Render'ın servisi sağlıksız kabul edip 502 üretme riski azaltıldı. `/health` yanıt gövdesi değiştirilmedi.
+
+v1.1.2 ile WordPress'ten model indirme sınırı sabit 30 saniye yerine `DOWNLOAD_TIMEOUT` ayarına bağlandı ve Render varsayılanı 180 saniye yapıldı. İndirme zaman aşımı artık `file_download_timeout` olarak açıkça raporlanır.
+WordPress ile uyumlu olması için varsayılan `MAX_UPLOAD_MB` değeri de 200 MB olarak ayarlandı.
 
 Güvenlik notu: Bu servis temel API anahtarı kontrolü sağlar; rate limit, kullanıcı hesabı, virüs taraması ve kalıcı iş kuyruğu içermez.
