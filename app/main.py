@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-app = FastAPI(title="3D Slicer Server", version="1.2.0")
+app = FastAPI(title="3D Slicer Server", version="1.2.1")
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "200"))
 SLICER_TIMEOUT = int(os.getenv("SLICER_TIMEOUT", "240"))
 DOWNLOAD_TIMEOUT = int(os.getenv("DOWNLOAD_TIMEOUT", "180"))
@@ -274,6 +274,23 @@ def duration_hours(value: str) -> float:
     return hours + minutes / 60 + seconds / 3600
 
 
+def duration_text(hours: float) -> str:
+    total_seconds = max(0, int(round(hours * 3600)))
+    days, remainder = divmod(total_seconds, 86400)
+    hrs, remainder = divmod(remainder, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    parts = []
+    if days:
+        parts.append(f"{days}d")
+    if hrs:
+        parts.append(f"{hrs}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    if seconds or not parts:
+        parts.append(f"{seconds}s")
+    return " ".join(parts)
+
+
 def priced_result(result: dict, payload: dict) -> dict:
     grams = float(result.get("filament_used_g", 0))
     hours = duration_hours(str(result.get("estimated_print_time", "")))
@@ -288,7 +305,8 @@ def priced_result(result: dict, payload: dict) -> dict:
     return {
         **result,
         "filament_grams": grams * quantity,
-        "print_time_text": result.get("estimated_print_time", "-"),
+        "unit_print_time_text": result.get("estimated_print_time", "-"),
+        "print_time_text": duration_text(hours * quantity),
         "selling_price": round(selling, 2),
         "quantity": quantity,
     }

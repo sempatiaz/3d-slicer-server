@@ -106,3 +106,10 @@ def test_scale_validation() -> None:
         assert exc.error_type == "request_validation_error"
     else:
         raise AssertionError("QuoteError bekleniyordu")
+
+
+def test_quantity_multiplies_total_print_time() -> None:
+    priced = main.priced_result({"filament_used_g": 2, "estimated_print_time": "28m 36s"}, {"quantity": 20})
+    assert priced["quantity"] == 20
+    assert priced["unit_print_time_text"] == "28m 36s"
+    assert priced["print_time_text"] == "9h 32m"
