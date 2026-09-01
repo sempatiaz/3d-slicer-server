@@ -1,6 +1,6 @@
 # Render için 3D Slicer Sunucusu
 
-**Sürüm: v1.1**
+**Sürüm: v1.1.1**
 
 FastAPI ve Docker tabanlı küçük bir PrusaSlicer API'sidir. `/quote` modeli gerçekten dilimler ve G-code yorumlarından süre/filament tahmini çıkarır; `/slice` üretilen G-code'u indirir. `/health` kimlik doğrulama istemez. `/quote`, doğrudan multipart dosya yüklemenin yanında WordPress eklentisinin gönderdiği JSON `file_url` biçimini de destekler.
 
@@ -92,5 +92,7 @@ Testleri çalıştırmak için `pip install -r requirements-dev.txt` ardından `
 ## Kısa güncelleme notu
 
 v1.1 ile `/quote` hata teşhisi geliştirildi. Dosya indirme, desteklenmeyen biçim, baskı alanına sığmama, PrusaSlicer çıkış kodu, zaman aşımı ve beklenmeyen hata durumları ayrı JSON hata türleri olarak döndürülüyor. WordPress uyumluluğu için `message`, `detail` ve `error_type` alanları eklendi; `/health` ve Render çalışma şekli değiştirilmedi.
+
+v1.1.1 ile PrusaSlicer işi web sunucusunun ana döngüsünden ayrıldı. Uzun dilimleme sırasında `/health` yanıt vermeye devam eder; Render'ın servisi sağlıksız kabul edip 502 üretme riski azaltıldı. `/health` yanıt gövdesi değiştirilmedi.
 
 Güvenlik notu: Bu servis temel API anahtarı kontrolü sağlar; rate limit, kullanıcı hesabı, virüs taraması ve kalıcı iş kuyruğu içermez.

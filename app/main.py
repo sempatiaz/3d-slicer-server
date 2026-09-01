@@ -16,9 +16,10 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-app = FastAPI(title="3D Slicer Server", version="1.1.0")
+app = FastAPI(title="3D Slicer Server", version="1.1.1")
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "50"))
 SLICER_TIMEOUT = int(os.getenv("SLICER_TIMEOUT", "240"))
 PROFILE = Path(os.getenv("SLICER_PROFILE", "/app/profiles/default.ini"))
@@ -265,19 +266,13 @@ def priced_result(result: dict, payload: dict) -> dict:
     }
 
 
-@app.post("/quote", dependencies=[Depends(require_api_key)])
-async def quote(request: Request, file: UploadFile | None = File(default=None)) -> dict:
+def build_quote(file: UploadFile | None, payload: dict) -> dict:
     try:
         with tempfile.TemporaryDirectory() as directory:
             workdir = Path(directory)
-            payload: dict = {}
             if file is not None:
                 gcode = slice_model(file, workdir, quote_errors=True)
             else:
-                try:
-                    payload = await request.json()
-                except Exception as exc:
-                    raise QuoteError(422, "İstek doğrulanamadı", "request_validation_error", detail="Multipart file veya JSON file_url gerekli.", validation_reason="missing_file_or_json") from exc
                 if not isinstance(payload, dict) or not payload.get("file_url"):
                     raise QuoteError(422, "İstek doğrulanamadı", "request_validation_error", detail="JSON gövdesinde file_url alanı gerekli.", validation_reason="missing_file_url")
                 source = download_model(str(payload["file_url"]), str(payload.get("filename", "")), workdir)
@@ -288,6 +283,19 @@ async def quote(request: Request, file: UploadFile | None = File(default=None)) 
         raise
     except Exception as exc:
         raise QuoteError(500, "Beklenmeyen sunucu hatası", "unexpected_error", detail=f"{type(exc).__name__}: {exc}") from exc
+
+
+@app.post("/quote", dependencies=[Depends(require_api_key)])
+async def quote(request: Request, file: UploadFile | None = File(default=None)) -> dict:
+    payload: dict = {}
+    if file is None:
+        try:
+            payload = await request.json()
+        except Exception as exc:
+            raise QuoteError(422, "İstek doğrulanamadı", "request_validation_error", detail="Multipart file veya JSON file_url gerekli.", validation_reason="missing_file_or_json") from exc
+    # PrusaSlicer senkron çalışırken ana web döngüsünü bloke etmesin. Böylece
+    # Render'ın /health kontrolü uzun dilimleme sırasında da cevap alabilir.
+    return await run_in_threadpool(build_quote, file, payload)
 
 
 @app.post("/slice", dependencies=[Depends(require_api_key)])
