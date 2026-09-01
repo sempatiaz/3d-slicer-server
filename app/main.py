@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-app = FastAPI(title="3D Slicer Server", version="1.1.2")
+app = FastAPI(title="3D Slicer Server", version="1.2.0")
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "200"))
 SLICER_TIMEOUT = int(os.getenv("SLICER_TIMEOUT", "240"))
 DOWNLOAD_TIMEOUT = int(os.getenv("DOWNLOAD_TIMEOUT", "180"))
@@ -149,7 +149,24 @@ def save_upload(upload: UploadFile, target: Path, *, quote_errors: bool = False)
             output.write(chunk)
 
 
-def slice_path(source: Path, workdir: Path, *, quote_errors: bool = False) -> Path:
+def quote_transforms(payload: dict) -> dict[str, float]:
+    try:
+        scale = float(payload.get("scale_percent", 100))
+        rotations = {
+            "rotate_x": float(payload.get("rotate_x", 0)),
+            "rotate_y": float(payload.get("rotate_y", 0)),
+            "rotate_z": float(payload.get("rotate_z", 0)),
+        }
+    except (TypeError, ValueError) as exc:
+        raise QuoteError(422, "Model ölçüleri geçersiz", "request_validation_error", detail="Ölçek ve dönüş değerleri sayı olmalı.", validation_reason="invalid_transform") from exc
+    if not 10 <= scale <= 300:
+        raise QuoteError(422, "Model ölçeği geçersiz", "request_validation_error", detail="Ölçek %10 ile %300 arasında olmalı.", validation_reason={"scale_percent": scale})
+    if any(abs(value) > 3600 for value in rotations.values()):
+        raise QuoteError(422, "Model dönüşü geçersiz", "request_validation_error", detail="Dönüş değerleri -3600 ile 3600 derece arasında olmalı.", validation_reason=rotations)
+    return {"scale_percent": scale, **rotations}
+
+
+def slice_path(source: Path, workdir: Path, *, quote_errors: bool = False, transforms: dict[str, float] | None = None) -> Path:
     suffix = source.suffix.lower()
     if suffix not in SUPPORTED_SUFFIXES:
         if quote_errors:
@@ -161,7 +178,15 @@ def slice_path(source: Path, workdir: Path, *, quote_errors: bool = False) -> Pa
             raise QuoteError(503, "PrusaSlicer kullanılamıyor", "slicer_unavailable", detail="PrusaSlicer CLI bu imajda bulunamadı")
         raise HTTPException(status_code=503, detail="PrusaSlicer CLI bu imajda kurulamadı; README'deki açıklamaya bakın")
     output = workdir / "output.gcode"
-    args = command + ["--load", str(PROFILE), "--export-gcode", "--output", str(output), str(source)]
+    transform = transforms or {"scale_percent": 100, "rotate_x": 0, "rotate_y": 0, "rotate_z": 0}
+    args = command + [
+        "--load", str(PROFILE),
+        "--scale", f'{transform["scale_percent"]:g}%',
+        "--rotate-x", f'{transform["rotate_x"]:g}',
+        "--rotate-y", f'{transform["rotate_y"]:g}',
+        "--rotate", f'{transform["rotate_z"]:g}',
+        "--export-gcode", "--output", str(output), str(source),
+    ]
     try:
         completed = subprocess.run(args, capture_output=True, text=True, timeout=SLICER_TIMEOUT)
     except subprocess.TimeoutExpired as exc:
@@ -172,7 +197,7 @@ def slice_path(source: Path, workdir: Path, *, quote_errors: bool = False) -> Pa
         message = (completed.stderr or completed.stdout or "Bilinmeyen PrusaSlicer hatası")[-1500:]
         if quote_errors:
             combined = f"{completed.stdout}\n{completed.stderr}".lower()
-            bed_patterns = ("outside the print area", "outside print area", "does not fit", "too large for", "bed shape", "print bed")
+            bed_patterns = ("outside the print area", "outside print area", "does not fit", "could not fit on the bed", "too large for", "bed shape", "print bed")
             if any(pattern in combined for pattern in bed_patterns):
                 raise QuoteError(422, "Model baskı alanına sığmıyor", "model_outside_print_area", detail="PrusaSlicer modelin baskı tablası sınırlarının dışında olduğunu bildirdi.", stdout=completed.stdout, stderr=completed.stderr, exit_code=completed.returncode, validation_reason="model_outside_print_area")
             raise QuoteError(422, "PrusaSlicer modeli dilimleyemedi", "slicer_exit_error", detail=f"PrusaSlicer başarısız çıkış kodu döndürdü: {completed.returncode}", stdout=completed.stdout, stderr=completed.stderr, exit_code=completed.returncode)
@@ -271,16 +296,19 @@ def priced_result(result: dict, payload: dict) -> dict:
 
 def build_quote(file: UploadFile | None, payload: dict) -> dict:
     try:
+        transforms = quote_transforms(payload)
         with tempfile.TemporaryDirectory() as directory:
             workdir = Path(directory)
             if file is not None:
-                gcode = slice_model(file, workdir, quote_errors=True)
+                source = workdir / f'model{Path(file.filename or "model.stl").suffix.lower()}'
+                save_upload(file, source, quote_errors=True)
+                gcode = slice_path(source, workdir, quote_errors=True, transforms=transforms)
             else:
                 if not isinstance(payload, dict) or not payload.get("file_url"):
                     raise QuoteError(422, "İstek doğrulanamadı", "request_validation_error", detail="JSON gövdesinde file_url alanı gerekli.", validation_reason="missing_file_url")
                 source = download_model(str(payload["file_url"]), str(payload.get("filename", "")), workdir)
-                gcode = slice_path(source, workdir, quote_errors=True)
-            result = {"mode": "real", "currency": "TRY", **metadata(gcode)}
+                gcode = slice_path(source, workdir, quote_errors=True, transforms=transforms)
+            result = {"mode": "real", "currency": "TRY", "transform": transforms, **metadata(gcode)}
             return priced_result(result, payload) if payload else result
     except QuoteError:
         raise

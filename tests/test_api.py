@@ -81,3 +81,28 @@ def test_timeout_contains_process_output() -> None:
     assert payload["error_type"] == "slicer_timeout"
     assert payload["prusa_stdout"] == "partial out"
     assert payload["prusa_stderr"] == "partial err"
+
+
+def test_model_transforms_are_sent_to_prusaslicer() -> None:
+    def successful_run(args, **kwargs):
+        output = Path(args[args.index("--output") + 1])
+        output.write_text("; filament used [g] = 10\n", encoding="utf-8")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    transforms = {"scale_percent": 125, "rotate_x": 90, "rotate_y": 180, "rotate_z": 270}
+    with tempfile.TemporaryDirectory() as directory, patch.object(main, "slicer_command", return_value=["prusa-slicer"]), patch.object(main.subprocess, "run", side_effect=successful_run) as run:
+        main.slice_path(Path(directory) / "model.stl", Path(directory), quote_errors=True, transforms=transforms)
+    args = run.call_args.args[0]
+    assert args[args.index("--scale") + 1] == "125%"
+    assert args[args.index("--rotate-x") + 1] == "90"
+    assert args[args.index("--rotate-y") + 1] == "180"
+    assert args[args.index("--rotate") + 1] == "270"
+
+
+def test_scale_validation() -> None:
+    try:
+        main.quote_transforms({"scale_percent": 500})
+    except main.QuoteError as exc:
+        assert exc.error_type == "request_validation_error"
+    else:
+        raise AssertionError("QuoteError bekleniyordu")
